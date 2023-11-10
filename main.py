@@ -9,13 +9,14 @@ import sys
 import json
 import aiohttp
 import time
+import urllib.parse
 
 intents = discord.Intents.none()
 intents.guilds = True
 logger = logging.getLogger('discord.bot')
 base_url = os.getenv('BASE_URL', 'https://vps.suchmeme.nl/print')
-token = os.getenv('BOT_TOKEN')
-if token is None:
+bot_token = os.getenv('BOT_TOKEN')
+if bot_token is None:
     raise Exception('BOT_TOKEN env var not set')
 
 class MyClient(discord.Client):
@@ -85,6 +86,29 @@ async def uid_embed(uid : str, color : int = 0x0000FF) -> discord.Embed:
     embed.set_author(name=data['author']['name'], url=data['author']['website'], icon_url=data['author']['thumbnail']['url'])
     return embed
 
+async def uid_download_embed(uid : str, color : int = 0x00FF00) -> discord.Embed:
+    async with aiohttp.ClientSession() as session:
+        async with session.get(base_url + f'/Posts/universal/{uid}') as response: 
+            if response.status != 200:
+                raise Exception(f'Request failed! {response.status}')
+
+            data = await response.json()
+
+    def generate_addons(x) -> str:
+        addons = []
+        if (uid.startswith('prusa-printables:')):
+            addons.append(f"([PrusaSlicer]({base_url + '/Hacks/prusa?url=' + urllib.parse.quote(x['url'])}))")
+
+        return ' '.join(addons)
+
+    embed = discord.Embed(colour=color, title=data['name'][:60], url=data['website'])
+
+    embed.add_field(name='Downloads', value='\n'.join(
+        [f"- [{x['name']}]({x['url']}) {generate_addons(x)}" for x in data['downloads']]))
+
+    embed.set_author(name=data['author']['name'], url=data['author']['website'], icon_url=data['author']['thumbnail']['url'])
+    return embed
+
 async def get_prints_from_token(token : str, invalidate_cache : bool = False) -> dict:
     global CACHE
 
@@ -113,8 +137,7 @@ async def get_prints_from_token(token : str, invalidate_cache : bool = False) ->
     return CACHE[token]['data']
 
 async def posts_autocomplete(interaction: discord.Interaction, current: str) -> list[discord.app_commands.Choice[str]]:
-    channel = str(interaction.channel.id)
-    token = await get_channel_mapping(channel, interaction.channel.name)
+    token = await get_channel_mapping(str(interaction.user.id), interaction.user.name)
     items = await get_prints_from_token(token)
     try:
         result = [
@@ -130,15 +153,12 @@ async def posts_autocomplete(interaction: discord.Interaction, current: str) -> 
 
 @bot.print_group.command(name='complete', description='Mark a print as completed')
 @discord.app_commands.autocomplete(uid=posts_autocomplete)
-async def print_complete_command(interaction: discord.Interaction, uid : str):
-    await print_complete(interaction, uid)
+async def print_complete_command(interaction: discord.Interaction, uid : str, show_in_channel : bool = False):
+    await print_complete(interaction, uid, show_in_channel)
 
-async def print_complete(interaction: discord.Interaction, uid : str):
-    await interaction.response.defer()
-
-    channel = str(interaction.channel.id)
-    token = await get_channel_mapping(channel, interaction.channel.name)
-    items = await get_prints_from_token(token)
+async def print_complete(interaction: discord.Interaction, uid : str, show_in_channel : bool = False):
+    await interaction.response.defer(ephemeral=not show_in_channel)
+    token = await get_channel_mapping(str(interaction.user.id), interaction.user.name)
 
     async with aiohttp.ClientSession() as session:
         async with session.delete(base_url + f'/Saved/{token}/remove', json={
@@ -150,24 +170,39 @@ async def print_complete(interaction: discord.Interaction, uid : str):
     asyncio.create_task(get_prints_from_token(token, True))
 
     embed = await uid_embed(uid, 0xFF0000)
-    await interaction.followup.send('Print completed, removed from queue', embed=embed)
+    await interaction.followup.send('Print completed, removed from queue', embed=embed, ephemeral=not show_in_channel)
 
-class CompleteButton(discord.ui.View):
-    def __init__(self, uid : str):
-        super().__init__(timeout=None)
+class InteractButton(discord.ui.View):
+    def __init__(self, uid : str, user_id: int):
+        super().__init__(timeout=86400)
         self.uid = uid
+        self.user_id = user_id
+        self.completed = False
 
     @discord.ui.button(label='Complete', style=discord.ButtonStyle.danger)
     async def confirm(self, interaction: discord.Interaction, button: discord.Button):
+        if (interaction.user.id != self.user_id):
+            await interaction.response.send_message('This button belongs to someone else.', ephemeral=True)
+            return
+
+        if (self.completed):
+            await interaction.response.send_message('This print has already been completed.', ephemeral=True)
+            return
+
         await print_complete(interaction, self.uid)
-        self.stop()
+        self.completed = True
+
+    @discord.ui.button(label='Download', style=discord.ButtonStyle.primary)
+    async def list_downloads(self, interaction : discord.Interaction, button : discord.Button):
+        await interaction.response.defer(ephemeral=True)
+        embed = await uid_download_embed(self.uid)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.print_group.command(name='add', description='Add a 3d print URL to the queue')
-async def print_add(interaction: discord.Interaction, url : str):
+async def print_add(interaction: discord.Interaction, url : str, show_in_channel : bool = False):
     url = url.strip()
-    channel = str(interaction.channel.id)
-    await interaction.response.defer()
-    token = await get_channel_mapping(channel, interaction.channel.name)
+    await interaction.response.defer(ephemeral=not show_in_channel)
+    token = await get_channel_mapping(str(interaction.user.id), interaction.user.name)
 
     uid = None
     if (url.startswith('https://www.thingiverse.com/thing:')):
@@ -178,13 +213,10 @@ async def print_add(interaction: discord.Interaction, url : str):
         uid = f"prusa-printables:{url.split('/')[-1].split('-')[0]}"
 
     if uid == None:
-        await interaction.followup.send(f'URL was not recognised')
+        await interaction.followup.send(f'URL was not recognised', ephemeral=True)
         return
     
     success = True
-
-    print(token)
-    print(uid)
 
     async with aiohttp.ClientSession() as session:
         async with session.post(base_url + f'/Saved/{token}/add', json={
@@ -195,40 +227,63 @@ async def print_add(interaction: discord.Interaction, url : str):
             print(fail, response.status)
 
     asyncio.create_task(get_prints_from_token(token, True))
-    view = CompleteButton(uid)
+    view = InteractButton(uid, interaction.user.id)
 
     if success:
         embed = await uid_embed(uid)
-        embed.set_footer(text=f'StlSpy Share Code: {token}')
-        await interaction.followup.send('Done!', embed=embed, view=view)
+        if not show_in_channel:
+            embed.set_footer(text=f'API Code: {token}')
+
+        await interaction.followup.send('Done!', embed=embed, view=view, ephemeral=not show_in_channel)
     else:
-        await interaction.followup.send(f'Failed! {fail}')
+        await interaction.followup.send(f'Failed! {fail}', ephemeral=True)
 
 @bot.print_group.command(name='list', description='List current 3d print files in queue')
 @discord.app_commands.autocomplete(uid=posts_autocomplete)
-async def print_list(interaction: discord.Interaction, uid : str = None):
-    await interaction.response.defer()
-
-    channel = str(interaction.channel.id)
-    token = await get_channel_mapping(channel, interaction.channel.name)
+async def print_list(interaction: discord.Interaction, uid : str = None, show_in_channel : bool = False):
+    await interaction.response.defer(ephemeral=not show_in_channel)
+    
+    token = await get_channel_mapping(str(interaction.user.id), interaction.user.name)
     items = await get_prints_from_token(token)
 
     if (uid != None):
         embed = await uid_embed(uid)
-        embed.set_footer(text=f'StlSpy Share Code: {token}')
-        view = CompleteButton(uid)
-        await interaction.followup.send(embed=embed, view=view)
+
+        if not show_in_channel:
+            embed.set_footer(text=f'API Code: {token}')
+
+        view = InteractButton(uid, interaction.user.id)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=not show_in_channel)
         return
 
     embed = discord.Embed(title='Queued Items', color=0xFFFF00, description='\n'.join(
         f"- [{x['name']}]({x['url']})" for x in items
     ))
-    embed.set_footer(text=f'StlSpy Share Code: {token}')
-    await interaction.followup.send(embed=embed)
+
+    if not show_in_channel:
+        embed.set_footer(text=f'API Code: {token}')
+
+    await interaction.followup.send(embed=embed, ephemeral=not show_in_channel)
+
+@bot.print_group.command(name='help', description='Shows the help message of this bot')
+async def print_help(interaction : discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+
+    token = await get_channel_mapping(str(interaction.user.id), interaction.user.name)
+    embed = discord.Embed(title='3D Print Queue Bot', color=0x00FF00, description='This bot allows you to manage a queue of 3d prints')
+    embed.add_field(name='Commands', value='\n'.join(
+        f'`/print {x.name}` - {x.description}' for x in bot.print_group.commands
+    ), inline=False)
+
+    embed.add_field(name='API Code', value=f'You can programatically interact with your stored prints via [your share code]({base_url + "/Saved/" + token}).\nNote that anyone can edit your stored prints using the share code.\nDo not share this with others.', inline=False)
+    embed.add_field(name='Supported sites', value="Thingiverse, MyMiniFactory and Printables are supported by this bot. If you want more sites to be added, please see the contact info below.", inline=False)
+    embed.add_field(name='Contact', value='If you have any questions, please contact [suchmememanyskill on Discord](https://discord.com/users/249186838592487425)\nThe source code of the bot can be found [on Github](https://github.com/suchmememanyskill/3d-print-queue-discord-bot).', inline=False)
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.event
 async def on_ready():
     logger.info(f'Logged in as {bot.user} (ID: {bot.user.id})')
     logger.info('------')
 
-bot.run(token)
+bot.run(bot_token)

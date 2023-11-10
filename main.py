@@ -239,20 +239,20 @@ async def print_add(interaction: discord.Interaction, url : str, show_in_channel
         await interaction.followup.send(f'Failed! {fail}', ephemeral=True)
 
 @bot.print_group.command(name='list', description='List current 3d print files in queue')
-@discord.app_commands.autocomplete(uid=posts_autocomplete)
-async def print_list(interaction: discord.Interaction, uid : str = None, show_in_channel : bool = False):
+@discord.app_commands.autocomplete(print_name=posts_autocomplete)
+async def print_list(interaction: discord.Interaction, print_name : str = None, show_in_channel : bool = False):
     await interaction.response.defer(ephemeral=not show_in_channel)
     
     token = await get_channel_mapping(str(interaction.user.id), interaction.user.name)
     items = await get_prints_from_token(token)
 
-    if (uid != None):
-        embed = await uid_embed(uid)
+    if (print_name != None):
+        embed = await uid_embed(print_name)
 
         if not show_in_channel:
             embed.set_footer(text=f'API Code: {token}')
 
-        view = InteractButton(uid, interaction.user.id)
+        view = InteractButton(print_name, interaction.user.id)
         await interaction.followup.send(embed=embed, view=view, ephemeral=not show_in_channel)
         return
 

@@ -103,8 +103,8 @@ async def uid_download_embed(uid : str, color : int = 0x00FF00) -> discord.Embed
 
     embed = discord.Embed(colour=color, title=data['name'][:60], url=data['website'])
 
-    embed.add_field(name='Downloads', value='\n'.join(
-        [f"- [{x['name']}]({x['url']}) {generate_addons(x)}" for x in data['downloads']]))
+    for x in data['downloads']:
+        embed.add_field(name=x['name'], value=f"[Download]({x['url']}) {generate_addons(x)}", inline=False)
 
     embed.set_author(name=data['author']['name'], url=data['author']['website'], icon_url=data['author']['thumbnail']['url'])
     return embed

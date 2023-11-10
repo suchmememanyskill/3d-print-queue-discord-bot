@@ -1,0 +1,12 @@
+version: '3'
+
+services:
+  discordbot:
+    image: 'printorganiser'
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    environment:
+      - BOT_TOKEN=MTE2MzU4MTI1ODE2OTg2MDE5Ng.GRgjTN.eMXiocAr2k3Ll_VyurqnvFu1tjDmG2g7OcYswM 
+    volumes:
+      - ./data:/app/data

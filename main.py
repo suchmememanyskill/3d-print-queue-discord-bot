@@ -11,6 +11,10 @@ import aiohttp
 import time
 import urllib.parse
 
+# ---
+# SETUP
+# ---
+
 intents = discord.Intents.none()
 intents.guilds = True
 logger = logging.getLogger('discord.bot')
@@ -30,6 +34,10 @@ class MyClient(discord.Client):
         await self.tree.sync()
 
 bot = MyClient(intents=intents)
+
+# ---
+# CACHE AND STORAGE 
+# ---
 
 CHANNEL_MAPPINGS = {}
 CACHE = {}
@@ -71,6 +79,38 @@ async def get_channel_mapping(channel : str, channel_name : str | None = None) -
 
     return CHANNEL_MAPPINGS[channel]
 
+async def get_prints_from_token(token : str, invalidate_cache : bool = False) -> dict:
+    global CACHE
+
+    if token in CACHE and not invalidate_cache and (time.time() < (CACHE[token]['time'] + 3600)):
+        print('CACHE HIT!')
+        return CACHE[token]['data']
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(base_url + f'/Saved/{token}') as response: 
+            if response.status != 200:
+                raise Exception(f'Request failed! {response.status}')
+
+            data = await response.json()
+
+    CACHE[token] = {
+        'time': time.time(),
+        'data': [{
+            'uid': x['universalId'],
+            'name': x['name'],
+            'url': x['website'],
+            'image': x['thumbnail']['url'],
+            'author': x['author']['name']
+        } for x in data['posts'][::-1]]
+    }
+
+    return CACHE[token]['data']
+
+
+# ---
+# Utils
+# ---
+
 async def uid_embed(uid : str, color : int = 0x0000FF) -> discord.Embed:
     async with aiohttp.ClientSession() as session:
         async with session.get(base_url + f'/Posts/universal/{uid}') as response: 
@@ -109,68 +149,21 @@ async def uid_download_embed(uid : str, color : int = 0x00FF00) -> discord.Embed
     embed.set_author(name=data['author']['name'], url=data['author']['website'], icon_url=data['author']['thumbnail']['url'])
     return embed
 
-async def get_prints_from_token(token : str, invalidate_cache : bool = False) -> dict:
-    global CACHE
+def extract_uid(url : str) -> str:
+    uid = None
 
-    if token in CACHE and not invalidate_cache and (time.time() < (CACHE[token]['time'] + 3600)):
-        print('CACHE HIT!')
-        return CACHE[token]['data']
+    if (url.startswith('https://www.thingiverse.com/thing:')):
+        uid = f"thingiverse:{url.split(':')[-1]}"
+    elif (url.startswith("https://www.myminifactory.com/object/")):
+        uid = f"myminifactory:{url.split('-')[-1]}"
+    elif (url.startswith("https://www.printables.com/model")):
+        uid = f"prusa-printables:{url.split('/')[-1].split('-')[0]}"
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get(base_url + f'/Saved/{token}') as response: 
-            if response.status != 200:
-                raise Exception(f'Request failed! {response.status}')
+    return uid
 
-            data = await response.json()
-
-    CACHE[token] = {
-        'time': time.time(),
-        'data': [{
-            'uid': x['universalId'],
-            'name': x['name'],
-            'url': x['website'],
-            'image': x['thumbnail']['url'],
-            'author': x['author']['name']
-        } for x in data['posts'][::-1]]
-    }
-
-    return CACHE[token]['data']
-
-async def posts_autocomplete(interaction: discord.Interaction, current: str) -> list[discord.app_commands.Choice[str]]:
-    token = await get_channel_mapping(str(interaction.user.id), interaction.user.name)
-    items = await get_prints_from_token(token)
-    try:
-        result = [
-            discord.app_commands.Choice(name=x['name'], value=x['uid'])
-            for x in items if current.lower() in x['name'].lower()
-        ]
-        print(result)
-    except Exception as e:
-        result = []
-        print(str(e))
-
-    return result
-
-@bot.print_group.command(name='complete', description='Mark a print as completed')
-@discord.app_commands.autocomplete(uid=posts_autocomplete)
-async def print_complete_command(interaction: discord.Interaction, uid : str, show_in_channel : bool = False):
-    await print_complete(interaction, uid, show_in_channel)
-
-async def print_complete(interaction: discord.Interaction, uid : str, show_in_channel : bool = False):
-    await interaction.response.defer(ephemeral=not show_in_channel)
-    token = await get_channel_mapping(str(interaction.user.id), interaction.user.name)
-
-    async with aiohttp.ClientSession() as session:
-        async with session.delete(base_url + f'/Saved/{token}/remove', json={
-            'UID': uid
-        }) as response: 
-            if response.status != 200:
-                raise Exception('Failed to complete post')
-
-    asyncio.create_task(get_prints_from_token(token, True))
-
-    embed = await uid_embed(uid, 0xFF0000)
-    await interaction.followup.send('Print completed, removed from queue', embed=embed, ephemeral=not show_in_channel)
+# ---
+# Views
+# ---
 
 class InteractButton(discord.ui.View):
     def __init__(self, uid : str, user_id: int):
@@ -198,30 +191,75 @@ class InteractButton(discord.ui.View):
         embed = await uid_download_embed(self.uid)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
+class OnlyDownloadButton(discord.ui.View):
+    def __init__(self, uid : str):
+        super().__init__(timeout=86400)
+        self.uid = uid
+
+    @discord.ui.button(label='Download', style=discord.ButtonStyle.primary)
+    async def list_downloads(self, interaction : discord.Interaction, button : discord.Button):
+        await interaction.response.defer(ephemeral=True)
+        embed = await uid_download_embed(self.uid)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+# ---
+# Commands
+# ---
+
+async def posts_autocomplete(interaction: discord.Interaction, current: str) -> list[discord.app_commands.Choice[str]]:
+    token = await get_channel_mapping(str(interaction.user.id), interaction.user.name)
+    items = await get_prints_from_token(token)
+    try:
+        result = [
+            discord.app_commands.Choice(name=x['name'], value=x['uid'])
+            for x in items if current.lower() in x['name'].lower()
+        ]
+        print(result)
+    except Exception as e:
+        result = []
+        print(str(e))
+
+    return result
+
+@bot.print_group.command(name='complete', description='Mark a print as completed')
+@discord.app_commands.autocomplete(print_name=posts_autocomplete)
+async def print_complete_command(interaction: discord.Interaction, print_name : str, show_in_channel : bool = False):
+    await print_complete(interaction, print_name, show_in_channel)
+
+async def print_complete(interaction: discord.Interaction, uid : str, show_in_channel : bool = False):
+    await interaction.response.defer(ephemeral=not show_in_channel)
+    token = await get_channel_mapping(str(interaction.user.id), interaction.user.name)
+
+    async with aiohttp.ClientSession() as session:
+        async with session.delete(base_url + f'/Saved/{token}/remove', json={
+            'UID': uid
+        }) as response: 
+            if response.status != 200:
+                raise Exception('Failed to complete post')
+
+    asyncio.create_task(get_prints_from_token(token, True))
+
+    embed = await uid_embed(uid, 0xFF0000)
+    await interaction.followup.send('Print completed, removed from queue', embed=embed, ephemeral=not show_in_channel)
+
 @bot.print_group.command(name='add', description='Add a 3d print URL to the queue')
 async def print_add(interaction: discord.Interaction, url : str, show_in_channel : bool = False):
     url = url.strip()
     await interaction.response.defer(ephemeral=not show_in_channel)
     token = await get_channel_mapping(str(interaction.user.id), interaction.user.name)
 
-    uid = None
-    if (url.startswith('https://www.thingiverse.com/thing:')):
-        uid = f"thingiverse:{url.split(':')[-1]}"
-    elif (url.startswith("https://www.myminifactory.com/object/")):
-        uid = f"myminifactory:{url.split('-')[-1]}"
-    elif (url.startswith("https://www.printables.com/model")):
-        uid = f"prusa-printables:{url.split('/')[-1].split('-')[0]}"
+    uid = extract_uid(url)
 
-    if uid == None:
+    if uid is None:
         await interaction.followup.send(f'URL was not recognised', ephemeral=True)
         return
-    
+
     success = True
 
     async with aiohttp.ClientSession() as session:
         async with session.post(base_url + f'/Saved/{token}/add', json={
             'UID': uid
-        }) as response: 
+        }) as response:
             success = response.status == 200
             fail = await response.text()
             print(fail, response.status)
@@ -275,11 +313,26 @@ async def print_help(interaction : discord.Interaction):
         f'`/print {x.name}` - {x.description}' for x in bot.print_group.commands
     ), inline=False)
 
-    embed.add_field(name='API Code', value=f'You can programatically interact with your stored prints via [your share code]({base_url + "/Saved/" + token}).\nNote that anyone can edit your stored prints using the share code.\nDo not share this with others.', inline=False)
+    embed.add_field(name='API Code', value=f'You can programatically interact with your stored prints via [your API code]({base_url + "/Saved/" + token}).\nNote that anyone can edit your stored prints using this API code.\nDo not share this with others.', inline=False)
     embed.add_field(name='Supported sites', value="Thingiverse, MyMiniFactory and Printables are supported by this bot. If you want more sites to be added, please see the contact info below.", inline=False)
-    embed.add_field(name='Contact', value='If you have any questions, please contact [suchmememanyskill on Discord](https://discord.com/users/249186838592487425)\nThe source code of the bot can be found [on Github](https://github.com/suchmememanyskill/3d-print-queue-discord-bot).', inline=False)
+    embed.add_field(name='Contact', value='If you have any questions, please contact [suchmememanyskill on Discord](https://discord.com/users/249186838592487425).\nThe source code of the bot can be found [on Github](https://github.com/suchmememanyskill/3d-print-queue-discord-bot).', inline=False)
 
     await interaction.followup.send(embed=embed, ephemeral=True)
+
+@bot.print_group.command(name='info', description='Embeds a 3d print url')
+async def print_info(interaction: discord.Interaction, url : str, show_in_channel : bool = False):
+    url = url.strip()
+    await interaction.response.defer(ephemeral=not show_in_channel)
+
+    uid = extract_uid(url)
+
+    if uid is None:
+        await interaction.followup.send('URL was not recognised', ephemeral=True)
+        return
+
+    embed = await uid_embed(uid)
+    view = OnlyDownloadButton(uid)
+    await interaction.followup.send(embed=embed, view=view, ephemeral=not show_in_channel)
 
 @bot.event
 async def on_ready():

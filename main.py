@@ -162,6 +162,8 @@ def extract_uid(url : str) -> str:
         uid = f"myminifactory:{url.split('-')[-1]}"
     elif url.startswith("https://www.printables.com/model"):
         uid = f"prusa-printables:{url.split('/')[-1].split('-')[0]}"
+    elif url.startswith("https://makerworld.com/en/models/"):
+        uid = f"makerworld:{url.split('/')[-1].split('#')[0]}"
 
     return uid
 

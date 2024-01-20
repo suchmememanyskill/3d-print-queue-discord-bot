@@ -154,7 +154,7 @@ async def uid_download_embed(uid : str, color : int = 0x00FF00) -> discord.Embed
 def extract_uid(url : str) -> str:
     uid = None
 
-    if url.startswith('prusa-printables:') or url.startswith('thingiverse:') or url.startswith('myminifactory:'):
+    if url.startswith('prusa-printables:') or url.startswith('thingiverse:') or url.startswith('myminifactory:') or url.startswith("makerworld:"):
         uid = url
     elif url.startswith('https://www.thingiverse.com/thing:'):
         uid = f"thingiverse:{url.split(':')[-1]}"

@@ -10,12 +10,17 @@ import json
 import aiohttp
 import time
 import urllib.parse
+import re
 
 # ---
 # SETUP
 # ---
 
 intents = discord.Intents.none()
+intents.guild_messages = True
+intents.dm_messages = True
+intents.message_content = True
+intents.guild_reactions = True
 intents.guilds = True
 logger = logging.getLogger('discord.bot')
 base_url = os.getenv('BASE_URL', 'https://vps.suchmeme.nl/print')
@@ -126,9 +131,10 @@ async def uid_embed(uid : str, color : int = 0x0000FF) -> discord.Embed:
         embed.set_image(url=data['thumbnail']['url'])
 
     embed.set_author(name=data['author']['name'], url=data['author']['website'], icon_url=data['author']['thumbnail']['url'])
+    embed.set_footer(text=uid)
     return embed
 
-async def uid_download_embed(uid : str, color : int = 0x00FF00) -> discord.Embed:
+async def uid_download_embed(uid : str, color : int = 0x00FF00, with_image : bool = False) -> discord.Embed:
     async with aiohttp.ClientSession() as session:
         async with session.get(base_url + f'/Posts/universal/{uid}') as response: 
             if response.status != 200:
@@ -145,10 +151,14 @@ async def uid_download_embed(uid : str, color : int = 0x00FF00) -> discord.Embed
 
     embed = discord.Embed(colour=color, title=data['name'][:60], url=data['website'])
 
+    if with_image and data['thumbnail'] is not None or data['thumbnail']['url'] is not None:
+        embed.set_image(url=data['thumbnail']['url'])
+
     for x in data['downloads']:
         embed.add_field(name=x['name'], value=f"[Download]({x['url']}) {generate_addons(x)}", inline=False)
 
     embed.set_author(name=data['author']['name'], url=data['author']['website'], icon_url=data['author']['thumbnail']['url'])
+    embed.set_footer(text=uid)
     return embed
 
 def extract_uid(url : str) -> str:
@@ -166,6 +176,37 @@ def extract_uid(url : str) -> str:
         uid = f"makerworld:{url.split('/')[-1].split('#')[0]}"
 
     return uid
+
+# ---
+# Listeners
+# ---
+
+DOWNLOAD_SITES = {
+    "thingiverse": r"https:\/\/www\.thingiverse\.com\/thing:([0-9]+)[^0-9]*",
+    "myminifactory": r"https:\/\/www\.myminifactory\.com\/object\/.*-([0-9]+)[^0-9-]?",
+    "prusa-printables": r"https:\/\/www\.printables\.com\/model\/([0-9]+)[^0-9]?",
+    "makerworld": r"https:\/\/makerworld\.com\/en\/models\/([0-9]+)[^0-9]?"
+}
+
+@bot.event
+async def on_message(msg):
+    if msg.author.bot:
+        return
+
+    for site, regex in DOWNLOAD_SITES.items():
+        match = re.search(regex, msg.content)
+        if match is not None:
+            uid = f"{site}:{match.group(1)}"
+            await msg.add_reaction("⬇️")
+            start_time = time.time()
+            while start_time > (time.time() - 60*60*24):
+                res = await bot.wait_for("reaction_add", check=lambda reaction, user: not msg.author.bot and msg.id == reaction.message.id and reaction.emoji == "⬇️", timeout=60*60*24)
+                if res != None:
+                    channel = await res[1].create_dm()
+                    embed = await uid_download_embed(uid)
+                    await channel.send(embed=embed)
+            
+            break
 
 # ---
 # Views

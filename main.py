@@ -178,6 +178,38 @@ def extract_uid(url : str) -> str:
     return uid
 
 # ---
+# Views
+# ---
+
+class InteractButton(discord.ui.View):
+    def __init__(self, uid : str):
+        super().__init__(timeout=86400)
+        self.uid = uid
+
+    @discord.ui.button(label='Complete', style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.Button):
+        await print_complete(interaction, self.uid)
+
+    @discord.ui.button(label='Download', style=discord.ButtonStyle.primary)
+    async def list_downloads(self, interaction : discord.Interaction, button : discord.Button):
+        await interaction.response.defer(ephemeral=True)
+        embed = await uid_download_embed(self.uid)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label='Add to queue', style=discord.ButtonStyle.secondary)
+    async def add_to_queue(self, interaction : discord.Interaction, button : discord.Button):
+        await print_add(interaction, self.uid)
+
+class DeleteSelf(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label='Delete', style=discord.ButtonStyle.danger, custom_id="3dprint-msg-delete")
+    async def delete(self, interaction: discord.Interaction, button: discord.Button):
+        await interaction.response.defer(ephemeral=True)
+        await interaction.message.delete()
+
+# ---
 # Listeners
 # ---
 
@@ -200,36 +232,14 @@ async def on_message(msg):
             await msg.add_reaction("⬇️")
             start_time = time.time()
             while start_time > (time.time() - 60*60*24):
-                res = await bot.wait_for("reaction_add", check=lambda reaction, user: not msg.author.bot and msg.id == reaction.message.id and reaction.emoji == "⬇️", timeout=60*60*24)
+                res = await bot.wait_for("reaction_add", check=lambda reaction, user: not user.bot and msg.id == reaction.message.id and reaction.emoji == "⬇️", timeout=60*60*24)
                 if res != None:
                     channel = await res[1].create_dm()
                     embed = await uid_download_embed(uid)
-                    await channel.send(embed=embed)
+                    await channel.send(embed=embed, view=DeleteSelf())
             
             break
 
-# ---
-# Views
-# ---
-
-class InteractButton(discord.ui.View):
-    def __init__(self, uid : str):
-        super().__init__(timeout=86400)
-        self.uid = uid
-
-    @discord.ui.button(label='Complete', style=discord.ButtonStyle.danger)
-    async def confirm(self, interaction: discord.Interaction, button: discord.Button):
-        await print_complete(interaction, self.uid)
-
-    @discord.ui.button(label='Download', style=discord.ButtonStyle.primary)
-    async def list_downloads(self, interaction : discord.Interaction, button : discord.Button):
-        await interaction.response.defer(ephemeral=True)
-        embed = await uid_download_embed(self.uid)
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-    @discord.ui.button(label='Add to queue', style=discord.ButtonStyle.secondary)
-    async def add_to_queue(self, interaction : discord.Interaction, button : discord.Button):
-        await print_add(interaction, self.uid)
 
 # ---
 # Commands
@@ -381,5 +391,6 @@ async def print_info(interaction: discord.Interaction, url : str, show_in_channe
 async def on_ready():
     logger.info(f'Logged in as {bot.user} (ID: {bot.user.id})')
     logger.info('------')
+    bot.add_view(DeleteSelf())
 
 bot.run(bot_token)

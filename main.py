@@ -11,6 +11,8 @@ import aiohttp
 import time
 import urllib.parse
 import re
+import subprocess
+import uuid
 
 # ---
 # SETUP
@@ -24,9 +26,15 @@ intents.guild_reactions = True
 intents.guilds = True
 logger = logging.getLogger('discord.bot')
 base_url = os.getenv('BASE_URL', 'https://vps.suchmeme.nl/print')
+stl_thumb_path = os.getenv('STL_THUMB_PATH')
+if stl_thumb_path is None:
+    raise Exception('STL_THUMB_PATH env var not set')
 bot_token = os.getenv('BOT_TOKEN')
 if bot_token is None:
     raise Exception('BOT_TOKEN env var not set')
+
+react_to_messages = os.getenv("REACT_TO_MESSAGES", "true").lower() == "true"
+stl_preview_message = os.getenv("STL_PREVIEW", "true").lower() == "true"
 
 class MyClient(discord.Client):
     def __init__(self, *, intents: discord.Intents):
@@ -221,13 +229,30 @@ DOWNLOAD_SITES = {
 }
 
 @bot.event
-async def on_message(msg):
+async def on_message(msg : discord.Message):
     if msg.author.bot:
         return
+    
+    for attachment in msg.attachments:
+        id = str(uuid.uuid4())
+        try:
+            if stl_preview_message and attachment.content_type == "model/stl":
+                await attachment.save(id + ".stl")
+                subprocess.run([stl_thumb_path, '-f', 'PNG', '-s', '256', id + '.stl', id + ".png"])
+                await msg.channel.send(file=discord.File(id + ".png"))
+        except Exception as e:
+            logger.error(str(e))
+            pass
+        finally:
+            if os.path.exists(id + ".png"):
+                os.remove(id + ".png")
+            
+            if os.path.exists(id + ".stl"):
+                os.remove(id + ".stl")
 
     for site, regex in DOWNLOAD_SITES.items():
         match = re.search(regex, msg.content)
-        if match is not None:
+        if react_to_messages and match is not None:
             uid = f"{site}:{match.group(1)}"
             await msg.add_reaction("⬇️")
             start_time = time.time()
@@ -363,7 +388,7 @@ async def print_help(interaction : discord.Interaction):
 
     embed.add_field(name="How to use", value="This bot keeps track of a list of prints for you. You can use this list however you like, using it as a printing queue is just a suggestion.\n- You can add prints to this list with `/print add <url>`\n- You can view the list with `/print list`\n- You can view a specific print with `/print list print_name:<print name>`\n- You can remove a print from the list with `/print complete <print name>`", inline=False)
     embed.add_field(name='API Code', value=f'You can programatically interact with your stored prints via [your API code]({base_url + "/Saved/" + token}).\nNote that anyone can edit your stored prints using this API code.\nDo not share this with others.', inline=False)
-    embed.add_field(name='Supported sites', value="Thingiverse, MyMiniFactory and Printables are supported by this bot. If you want more sites to be added, please see the contact info below.", inline=False)
+    embed.add_field(name='Supported sites', value="Thingiverse, MyMiniFactory, Printables and MakerWorld are supported by this bot. If you want more sites to be added, please see the contact info below.", inline=False)
     embed.add_field(name='Contact', value='If you have any questions, please contact [suchmememanyskill on Discord](https://discord.com/users/249186838592487425).\nThe source code of the bot can be found [on Github](https://github.com/suchmememanyskill/3d-print-queue-discord-bot).', inline=False)
     embed.add_field(name='Stats', value=f"- {len(CHANNEL_MAPPINGS)} users have used this bot\n- {len(CACHE)} lists have been cached", inline=False)
 

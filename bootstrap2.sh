@@ -1,4 +1,4 @@
-#/bin/sh
+#!/bin/sh
 
 cd /app
-stl-thumb "$@"
+./stl-thumb "$@"

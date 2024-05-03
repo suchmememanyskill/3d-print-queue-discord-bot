@@ -5,7 +5,7 @@ RUN apt install git cmake build-essential pkg-config fontconfig libfontconfig1-d
 RUN git clone https://github.com/unlimitedbacon/stl-thumb
 RUN cd stl-thumb && cargo build --release
 
-FROM python:3.11-alpine
+FROM python:3.11-slim
 WORKDIR /app
 ENV STL_THUMB_PATH=/app/stl-thumb
 COPY --from=build /app/stl-thumb/target/release/stl-thumb /app/stl-thumb

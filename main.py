@@ -13,6 +13,7 @@ import urllib.parse
 import re
 import subprocess
 import uuid
+import math
 
 # ---
 # SETUP
@@ -26,15 +27,19 @@ intents.guild_reactions = True
 intents.guilds = True
 logger = logging.getLogger('discord.bot')
 base_url = os.getenv('BASE_URL', 'https://vps.suchmeme.nl/print')
-stl_thumb_path = os.getenv('STL_THUMB_PATH')
-if stl_thumb_path is None:
-    raise Exception('STL_THUMB_PATH env var not set')
+openscad_path = os.getenv('OPENSCAD_PATH')
+if openscad_path is None:
+    raise Exception('OPENSCAD_PATH env var not set')
+convert_path = os.getenv('CONVERT_PATH')
+if convert_path is None:
+    raise Exception('CONVERT_PATH env var not set')
 bot_token = os.getenv('BOT_TOKEN')
 if bot_token is None:
     raise Exception('BOT_TOKEN env var not set')
 
 react_to_messages = os.getenv("REACT_TO_MESSAGES", "true").lower() == "true"
 stl_preview_message = os.getenv("STL_PREVIEW", "true").lower() == "true"
+stl_preview_frame_count = int(os.getenv("STL_PREVIEW_FRAME_COUNT", "72"))
 
 class MyClient(discord.Client):
     def __init__(self, *, intents: discord.Intents):
@@ -235,17 +240,47 @@ async def on_message(msg : discord.Message):
     
     for attachment in msg.attachments:
         id = str(uuid.uuid4())
+        step = math.floor(360 / stl_preview_frame_count)
+
         try:
-            if stl_preview_message and attachment.content_type == "model/stl":
-                await attachment.save(id + ".stl")
-                subprocess.run([stl_thumb_path, '-f', 'PNG', '-s', '256', id + '.stl', id + ".png"])
-                await msg.channel.send(file=discord.File(id + ".png"))
+            async with msg.channel.typing():  
+                if stl_preview_message and attachment.content_type == "model/stl":
+                    stl_filename = id + ".stl"
+                    await attachment.save(stl_filename)
+
+                    for x in range(stl_preview_frame_count):
+                        frame_filename = f"{id}_{x}.png"
+
+                        subprocess.run([
+                            openscad_path,
+                            "blank.scad",
+                            "-D", f"import(\"{stl_filename}\", convexity=3);",
+                            "--export-format", "png",
+                            "-o", frame_filename,
+                            #"--view", "axes",
+                            "--preview",
+                            "--colorscheme", "BeforeDawn",
+                            f"--camera=0,0,0,60,0,{step * x},100",
+                            "--autocenter", "--viewall", "--projection", "o", "-q"
+                        ])
+
+                    # Create gif that is always 6 seconds in length
+                    args = [convert_path, "-delay", str(int(600/stl_preview_frame_count)), "-loop", "0"]
+                    args.extend([f"{id}_{x}.png" for x in range(stl_preview_frame_count)])
+                    args.append(id + ".gif")
+                    subprocess.run(args)
+
+                    await msg.channel.send(file=discord.File(id + ".gif"))
         except Exception as e:
             logger.error(str(e))
             pass
         finally:
-            if os.path.exists(id + ".png"):
-                os.remove(id + ".png")
+            if os.path.exists(id + ".gif"):
+                os.remove(id + ".gif")
+
+            for x in range(stl_preview_frame_count):
+                if (os.path.exists(f"{id}_{x}.png")):
+                    os.remove(f"{id}_{x}.png")
             
             if os.path.exists(id + ".stl"):
                 os.remove(id + ".stl")

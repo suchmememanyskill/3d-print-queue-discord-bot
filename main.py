@@ -247,11 +247,12 @@ async def on_message(msg : discord.Message):
                 if stl_preview_message and attachment.content_type == "model/stl":
                     stl_filename = id + ".stl"
                     await attachment.save(stl_filename)
+                    processes = []
 
                     for x in range(stl_preview_frame_count):
                         frame_filename = f"{id}_{x}.png"
 
-                        subprocess.run([
+                        process = await asyncio.create_subprocess_exec(*[
                             openscad_path,
                             "blank.scad",
                             "-D", f"import(\"{stl_filename}\", convexity=3);",
@@ -264,11 +265,19 @@ async def on_message(msg : discord.Message):
                             "--autocenter", "--viewall", "--projection", "o", "-q"
                         ])
 
+                        processes.append(process)
+                    
+                    for process in processes:
+                        if (await process.wait()) != 0:
+                            raise Exception("Failed to render preview")
+
                     # Create gif that is always 6 seconds in length
                     args = [convert_path, "-delay", str(int(600/stl_preview_frame_count)), "-loop", "0"]
                     args.extend([f"{id}_{x}.png" for x in range(stl_preview_frame_count)])
                     args.append(id + ".gif")
-                    subprocess.run(args)
+                    process = await asyncio.create_subprocess_exec(*args)
+                    if (await process.wait()) != 0:
+                        raise Exception("Failed to create gif")
 
                     await msg.channel.send(file=discord.File(id + ".gif"))
         except Exception as e:

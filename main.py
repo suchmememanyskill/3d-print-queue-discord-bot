@@ -14,6 +14,8 @@ import re
 import subprocess
 import uuid
 import math
+import numpy as np
+from stl import mesh
 
 # ---
 # SETUP
@@ -238,6 +240,7 @@ async def on_message(msg : discord.Message):
     if msg.author.bot:
         return
     
+    # Very cool code ddddanya wrote
     for attachment in msg.attachments:
         id = str(uuid.uuid4())
         step = math.floor(360 / stl_preview_frame_count)
@@ -248,28 +251,32 @@ async def on_message(msg : discord.Message):
                     stl_filename = id + ".stl"
                     await attachment.save(stl_filename)
 
-                    for x in range(stl_preview_frame_count):
-                        frame_filename = f"{id}_{x}.png"
+                    stl_mesh = mesh.Mesh.from_file(stl_filename)
+                    geocenter = (stl_mesh.max_ - stl_mesh.min_)/2
+                    geocenter_max = stl_mesh.max_
+                    scale = 30/max(geocenter[0],geocenter[1],geocenter[2]/0.5)
 
-                        process = await asyncio.create_subprocess_exec(*[
-                            openscad_path,
-                            "blank.scad",
-                            "-D", f"import(\"{stl_filename}\", convexity=3);",
-                            "--export-format", "png",
-                            "-o", frame_filename,
-                            #"--view", "axes",
-                            "--preview",
-                            "--colorscheme", "BeforeDawn",
-                            f"--camera=0,0,0,60,0,{step * x},100",
-                            "--autocenter", "--viewall", "--projection", "o", "-q"
-                        ])
+                    args = [
+                        openscad_path,
+                        "blank.scad",
+                        "-D", f"'scale([{scale},{scale},{scale}]) translate([{-geocenter_max[0]+geocenter[0]},{-geocenter_max[1]+geocenter[1]},{-geocenter_max[2]+geocenter[2]}]) import(\"{stl_filename}\", convexity=3, center=true); $vpr=[60,0,$t*360]'",
+                        "--export-format", "png",
+                        "-o", id + ".png",
+                        "--preview",
+                        "--colorscheme", "BeforeDawn",
+                        "--projection", "o",
+                        "--animate", str(stl_preview_frame_count),
+                        "--autocenter", "--viewall", "-q"
+                    ]
 
-                        if (await process.wait()) != 0:
-                            raise Exception("Failed to render preview")
+                    process = await asyncio.create_subprocess_shell(" ".join(args))
+
+                    if (await process.wait()) != 0:
+                        raise Exception("Failed to render preview")
 
                     # Create gif that is always 6 seconds in length
                     args = [convert_path, "-delay", str(int(600/stl_preview_frame_count)), "-loop", "0"]
-                    args.extend([f"{id}_{x}.png" for x in range(stl_preview_frame_count)])
+                    args.extend([f"{id}{str(x).zfill(5)}.png" for x in range(stl_preview_frame_count)])
                     args.append(id + ".gif")
                     process = await asyncio.create_subprocess_exec(*args)
                     if (await process.wait()) != 0:
@@ -284,8 +291,9 @@ async def on_message(msg : discord.Message):
                 os.remove(id + ".gif")
 
             for x in range(stl_preview_frame_count):
-                if (os.path.exists(f"{id}_{x}.png")):
-                    os.remove(f"{id}_{x}.png")
+                path = f"{id}{str(x).zfill(5)}.png"
+                if (os.path.exists(path)):
+                    os.remove(path)
             
             if os.path.exists(id + ".stl"):
                 os.remove(id + ".stl")

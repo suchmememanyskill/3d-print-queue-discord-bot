@@ -243,8 +243,8 @@ async def on_message(msg : discord.Message):
         step = math.floor(360 / stl_preview_frame_count)
 
         try:
-            async with msg.channel.typing():  
-                if stl_preview_message and attachment.content_type == "model/stl":
+            if stl_preview_message and attachment.content_type == "model/stl":
+                async with msg.channel.typing():  
                     stl_filename = id + ".stl"
                     await attachment.save(stl_filename)
                     processes = []

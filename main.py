@@ -247,7 +247,6 @@ async def on_message(msg : discord.Message):
                 async with msg.channel.typing():  
                     stl_filename = id + ".stl"
                     await attachment.save(stl_filename)
-                    processes = []
 
                     for x in range(stl_preview_frame_count):
                         frame_filename = f"{id}_{x}.png"
@@ -265,9 +264,6 @@ async def on_message(msg : discord.Message):
                             "--autocenter", "--viewall", "--projection", "o", "-q"
                         ])
 
-                        processes.append(process)
-                    
-                    for process in processes:
                         if (await process.wait()) != 0:
                             raise Exception("Failed to render preview")
 

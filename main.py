@@ -133,6 +133,21 @@ async def uid_in_prints_from_token(token : str, uid : str) -> bool:
 # Utils
 # ---
 
+DOWNLOAD_SITES = {
+    "thingiverse": r"https:\/\/www\.thingiverse\.com\/thing:([0-9]+)[^0-9]*",
+    "myminifactory": r"https:\/\/www\.myminifactory\.com\/object\/.*-([0-9]+)[^0-9-]?",
+    "prusa-printables": r"https:\/\/www\.printables\.com\/model\/([0-9]+)[^0-9]?",
+    "makerworld": r"https:\/\/makerworld\.com\/en\/models\/([0-9]+)[^0-9]?"
+}
+
+def extract_uid_from_message(message : str) -> str | None:
+    for site, regex in DOWNLOAD_SITES.items():
+        match = re.search(regex, message)
+        if react_to_messages and match is not None:
+            return f"{site}:{match.group(1)}"
+        
+    return None
+
 async def uid_embed(uid : str, color : int = 0x0000FF) -> discord.Embed:
     async with aiohttp.ClientSession() as session:
         async with session.get(base_url + f'/Posts/universal/{uid}') as response: 
@@ -228,12 +243,32 @@ class DeleteSelf(discord.ui.View):
 # Listeners
 # ---
 
-DOWNLOAD_SITES = {
-    "thingiverse": r"https:\/\/www\.thingiverse\.com\/thing:([0-9]+)[^0-9]*",
-    "myminifactory": r"https:\/\/www\.myminifactory\.com\/object\/.*-([0-9]+)[^0-9-]?",
-    "prusa-printables": r"https:\/\/www\.printables\.com\/model\/([0-9]+)[^0-9]?",
-    "makerworld": r"https:\/\/makerworld\.com\/en\/models\/([0-9]+)[^0-9]?"
-}
+@bot.event
+async def on_raw_reaction_add(reaction : discord.RawReactionActionEvent):
+    if reaction.member.bot:
+        return
+
+    if reaction.emoji.name != "⬇️":
+        return
+    
+    channel = bot.get_channel(reaction.channel_id)
+
+    if channel is None:
+        return
+    
+    message = await channel.fetch_message(reaction.message_id)
+
+    if message is None:
+        return
+
+    uid = extract_uid_from_message(message.content)
+
+    if uid is None:
+        return
+    
+    channel = await reaction.member.create_dm()
+    embed = await uid_download_embed(uid)
+    await channel.send(embed=embed, view=DeleteSelf())
 
 @bot.event
 async def on_message(msg : discord.Message):
@@ -298,21 +333,8 @@ async def on_message(msg : discord.Message):
             if os.path.exists(id + ".stl"):
                 os.remove(id + ".stl")
 
-    for site, regex in DOWNLOAD_SITES.items():
-        match = re.search(regex, msg.content)
-        if react_to_messages and match is not None:
-            uid = f"{site}:{match.group(1)}"
-            await msg.add_reaction("⬇️")
-            start_time = time.time()
-            while start_time > (time.time() - 60*60*24):
-                res = await bot.wait_for("reaction_add", check=lambda reaction, user: not user.bot and msg.id == reaction.message.id and reaction.emoji == "⬇️", timeout=60*60*24)
-                if res != None:
-                    channel = await res[1].create_dm()
-                    embed = await uid_download_embed(uid)
-                    await channel.send(embed=embed, view=DeleteSelf())
-            
-            break
-
+    if (extract_uid_from_message(msg.content) != None):
+        await msg.add_reaction("⬇️")
 
 # ---
 # Commands

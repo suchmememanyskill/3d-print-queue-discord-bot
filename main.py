@@ -184,7 +184,7 @@ async def uid_download_embed(uid : str, color : int = 0x00FF00, with_image : boo
     if with_image and data['thumbnail'] is not None or data['thumbnail']['url'] is not None:
         embed.set_image(url=data['thumbnail']['url'])
 
-    for x in data['downloads']:
+    for x in data['downloads'][:20]:
         embed.add_field(name=x['name'], value=f"[Download]({x['url']}) {generate_addons(x)}", inline=False)
 
     embed.set_author(name=data['author']['name'], url=data['author']['website'], icon_url=data['author']['thumbnail']['url'])

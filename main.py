@@ -172,20 +172,22 @@ async def uid_download_embed(uid : str, color : int = 0x00FF00, with_image : boo
 
             data = await response.json()
 
-    def generate_addons(x) -> str:
-        addons = []
-        if (uid.startswith('prusa-printables:')):
-            addons.append(f"([PrusaSlicer]({base_url + '/Hacks/prusa?url=' + urllib.parse.quote(x['url'])}))")
-
-        return ' '.join(addons)
-
     embed = discord.Embed(colour=color, title=data['name'][:60], url=data['website'])
 
     if with_image and data['thumbnail'] is not None or data['thumbnail']['url'] is not None:
         embed.set_image(url=data['thumbnail']['url'])
 
+    char_count = 0
     for x in data['downloads'][:20]:
-        embed.add_field(name=x['name'], value=f"[Download]({x['url']}) {generate_addons(x)}", inline=False)
+        name = x['name']
+        value = f"[Download]({x['url']})"
+        count = len(name) + len(value)
+
+        if (char_count + count) > 5000:
+            continue
+
+        embed.add_field(name=name, value=value, inline=False)
+        char_count += count
 
     embed.set_author(name=data['author']['name'], url=data['author']['website'], icon_url=data['author']['thumbnail']['url'])
     embed.set_footer(text=uid)
